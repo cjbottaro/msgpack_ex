@@ -1,7 +1,7 @@
 defmodule MsgPack do
 
   @coder Application.compile_env(:msg_pack, __MODULE__, [])
-  |> Keyword.get(:coder, MsgPack.Coder)
+  |> Keyword.get(:coder, MsgPack.DefaultCoder)
 
   def encode(input, opts \\ []) do
     coder = Keyword.get(opts, :coder, @coder)
