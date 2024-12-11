@@ -16,17 +16,163 @@ defmodule MsgPack.Coder do
       type_id when is_integer(type_id) -> type_id
     end
 
-    quote do
+    quote [location: :keep] do
       @behaviour MsgPack.Coder
-      # @before_compile MsgPack.Coder
       @ext_timestamp unquote(ext_timestamp)
 
+      @compile {:inline, [
+        encode_nil: 2,
+        encode_boolean: 2,
+        encode_atom: 2,
+        encode_float: 2,
+        encode_integer: 2,
+        encode_binary: 2,
+        encode_bitstring: 2,
+        encode_list: 2,
+        encode_struct: 2,
+        encode_map: 2,
+      ]}
+
+      def encode(n, opts) when is_nil(n), do: encode_nil(n, opts)
+      def encode(b, opts) when is_boolean(b), do: encode_boolean(b, opts)
+      def encode(a, opts) when is_atom(a), do: encode_atom(a, opts)
+      def encode(f, opts) when is_float(f), do: encode_float(f, opts)
+      def encode(n, opts) when is_integer(n), do: encode_integer(n, opts)
+      def encode(b, opts) when is_binary(b), do: encode_binary(b, opts)
+      def encode(b, opts) when is_bitstring(b), do: encode_bitstring(b, opts)
+      def encode(l, opts) when is_list(l), do: encode_list(l, opts)
+      def encode(s, opts) when is_struct(s), do: encode_struct(s, opts)
+      def encode(m, opts) when is_map(m), do: encode_map(m, opts)
+
+      def encode_nil(nil, _opts), do: {:ok, <<0xc0>>}
+
+      def encode_boolean(false, _opts), do: {:ok, <<0xc2>>}
+      def encode_boolean(true, _opts), do: {:ok, <<0xc3>>}
+
+      def encode_atom(a, opts), do: encode_binary(Atom.to_string(a), opts)
+
+      def encode_float(f, _opts), do: {:ok, <<0xcb, f::64-float>>}
+
+      def encode_integer(n, opts) do
+        if n < 0 do
+          cond do
+            n >= -32 -> {:ok, [0x100 + n]}
+            n >= -128 -> {:ok, [0xd0, 0x100 + n]}
+            n >= -0x8000 -> {:ok, <<0xd1, n::16>>}
+            n >= -0x80000000 -> {:ok, <<0xd2, n::32>>}
+            n >= -0x8000000000000000 -> {:ok, <<0xd3, n::64>>}
+            true -> {:error, "int too small"}
+          end
+        else
+          cond do
+            n < 128 -> {:ok, [n]}
+            n < 256 -> {:ok, [0xcc, n]}
+            n < 0x10000 -> {:ok, <<0xcd, n::16>>}
+            n < 0x100000000 -> {:ok, <<0xce, n::32>>}
+            n < 0x10000000000000000 -> {:ok, <<0xcf, n::64>>}
+            true -> {:error, "int too big"}
+          end
+        end
+      end
+
+      def encode_binary(b, opts) do
+        size = byte_size(b)
+
+        marker = cond do
+          size < 32 -> 0b10100000 + size
+          size < 256 -> [0xd9, size]
+          size < 0x10000 -> <<0xda, size::16>>
+          size < 0x100000000 -> <<0xdb, size::32>>
+          true -> nil
+        end
+
+        if marker do
+          {:ok, [marker | b]}
+        else
+          {:error, "string too big"}
+        end
+      end
+
+      def encode_bitstring(_b, _opts), do: {:error, "encode_bitstring not implemented"}
+
+      def encode_list(l, opts) do
+        len = length(l)
+
+        marker = cond do
+          len < 16 -> 0b10010000 + len
+          len < 0x10000 -> <<0xdc, len::16>>
+          len < 0x100000000 -> <<0xdd, len::32>>
+          true -> nil
+        end
+
+        if marker do
+          encode_list(l, opts, [marker])
+        else
+          {:error, "list too big"}
+        end
+      end
+
+      @compile {:inline, [encode_list: 3]}
+
+      defp encode_list([], _opts, acc), do: {:ok, acc}
+      defp encode_list([item | rest], opts, acc) do
+        with {:ok, item_data} <- encode(item, opts) do
+          encode_list(rest, opts, [acc, item_data])
+        end
+      end
+
       if @ext_timestamp do
-        def encode(%DateTime{} = dt, _opts) do
+
+        def encode_struct(%DateTime{} = dt, _opts) do
           MsgPack.Coder.encode_timestamp(dt)
           |> encode_ext(@ext_timestamp)
         end
 
+      end
+
+      def encode_struct(s, opts) do
+        {:error, "encode_struct not implemented for #{inspect s.__struct__}"}
+      end
+
+      def encode_map(m, opts) do
+        size = map_size(m)
+
+        marker = cond do
+          size < 16 -> 0b10000000 + size
+          size < 0x10000 -> <<0xde, size::16>>
+          size < 0x100000000 -> <<0xdf, size::32>>
+          true -> nil
+        end
+
+        if marker do
+          encode_map(Map.to_list(m), opts, [marker])
+        else
+          {:error, "map too big"}
+        end
+      end
+
+      @compile {:inline, [encode_map: 3]}
+
+      defp encode_map([], _opts, acc), do: {:ok, acc}
+      defp encode_map([{k, v} | rest], opts, acc) do
+        with {:ok, kd} <- encode(k, opts),
+          {:ok, vd} <- encode(v, opts)
+        do
+          encode_map(rest, opts, [acc, kd, vd])
+        end
+      end
+
+      @compile [:inline, [encode_ext: 2]]
+
+      def encode_ext(data, type_id) do
+        MsgPack.Coder.encode_ext(__MODULE__, data, type_id)
+      end
+
+      def decode(data, opts) do
+        MsgPack.Coder.decode(__MODULE__, data, opts)
+      end
+
+      if @ext_timestamp do
         def decode_ext(@ext_timestamp, data) do
           case MsgPack.Coder.decode_timestamp(data) do
             {:ok, dt} -> {:ok, dt}
@@ -35,20 +181,29 @@ defmodule MsgPack.Coder do
         end
       end
 
-      def encode(term, opts), do: MsgPack.Coder.encode(__MODULE__, term, opts)
-      def decode(data, opts), do: MsgPack.Coder.decode(__MODULE__, data, opts)
-      def encode_ext(data, type_id), do: MsgPack.Coder.encode_ext(__MODULE__, data, type_id)
       def decode_ext(type_id, _data), do: {:error, "unknown ext type #{type_id}"}
 
-      defoverridable([encode: 2, decode_ext: 2])
+      defoverridable([
+        encode_nil: 2,
+        encode_boolean: 2,
+        encode_atom: 2,
+        encode_float: 2,
+        encode_integer: 2,
+        encode_binary: 2,
+        encode_bitstring: 2,
+        encode_list: 2,
+        encode_struct: 2,
+        encode_map: 2,
+        decode_ext: 2
+      ])
     end
   end
 
   defmacro __before_compile__(_env) do
     quote do
 
-      def encode(v, opts), do: super(v, opts)
-      def decode_ext(type_id, data), do: super(type_id, data)
+      # def encode(v, opts), do: super(v, opts)
+      # def decode_ext(type_id, data), do: super(type_id, data)
 
       # if @ext_timestamp do
       #   def encode(%DateTime{} = dt, _opts) do
