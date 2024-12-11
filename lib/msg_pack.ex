@@ -20,7 +20,8 @@ defmodule MsgPack do
   def decode(input, opts \\ []) do
     coder = Keyword.get(opts, :coder, @coder)
     case coder.decode(input, opts) do
-      {:ok, output, _rest} -> {:ok, output}
+      {:ok, output, ""} -> {:ok, output}
+      {:ok, _output, _rest} -> {:error, "excess bytes"}
       error -> error
     end
   end
