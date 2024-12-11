@@ -18,13 +18,8 @@ defmodule MsgPack.Coder do
 
     quote do
       @behaviour MsgPack.Coder
-      @before_compile MsgPack.Coder
+      # @before_compile MsgPack.Coder
       @ext_timestamp unquote(ext_timestamp)
-    end
-  end
-
-  defmacro __before_compile__(_env) do
-    quote do
 
       if @ext_timestamp do
         def encode(%DateTime{} = dt, _opts) do
@@ -44,6 +39,35 @@ defmodule MsgPack.Coder do
       def decode(data, opts), do: MsgPack.Coder.decode(__MODULE__, data, opts)
       def encode_ext(data, type_id), do: MsgPack.Coder.encode_ext(__MODULE__, data, type_id)
       def decode_ext(type_id, _data), do: {:error, "unknown ext type #{type_id}"}
+
+      defoverridable([encode: 2, decode_ext: 2])
+    end
+  end
+
+  defmacro __before_compile__(_env) do
+    quote do
+
+      def encode(v, opts), do: super(v, opts)
+      def decode_ext(type_id, data), do: super(type_id, data)
+
+      # if @ext_timestamp do
+      #   def encode(%DateTime{} = dt, _opts) do
+      #     MsgPack.Coder.encode_timestamp(dt)
+      #     |> encode_ext(@ext_timestamp)
+      #   end
+
+      #   def decode_ext(@ext_timestamp, data) do
+      #     case MsgPack.Coder.decode_timestamp(data) do
+      #       {:ok, dt} -> {:ok, dt}
+      #       :error -> {:error, "invalid format: #{@ext_timestamp} (timestamp)"}
+      #     end
+      #   end
+      # end
+
+      # def encode(term, opts), do: MsgPack.Coder.encode(__MODULE__, term, opts)
+      # def decode(data, opts), do: MsgPack.Coder.decode(__MODULE__, data, opts)
+      # def encode_ext(data, type_id), do: MsgPack.Coder.encode_ext(__MODULE__, data, type_id)
+      # def decode_ext(type_id, _data), do: {:error, "unknown ext type #{type_id}"}
 
     end
   end
@@ -141,29 +165,35 @@ defmodule MsgPack.Coder do
     end
   end
 
+  def encode(mod, struct, opts) when is_struct(struct) do
+    map = MsgPack.Struct.to_map(struct)
+    encode_map(mod, map, opts)
+  end
+
   def encode(mod, map, opts) when is_map(map) do
-    size = map_size(map)
+    encode_map(mod, map, opts)
+    # size = map_size(map)
 
-    marker = cond do
-      size < 16 -> 0b10000000 + size
-      size < 0x10000 -> <<0xde, size::16>>
-      size < 0x100000000 -> <<0xdf, size::32>>
-      true -> nil
-    end
+    # marker = cond do
+    #   size < 16 -> 0b10000000 + size
+    #   size < 0x10000 -> <<0xde, size::16>>
+    #   size < 0x100000000 -> <<0xdf, size::32>>
+    #   true -> nil
+    # end
 
-    if marker do
-      Enum.reduce_while(map, {:ok, [marker]}, fn {k, v}, {:ok, acc} ->
-        with {:ok, key_data} <- mod.encode(k, opts),
-          {:ok, value_data} <- mod.encode(v, opts)
-        do
-          {:cont, {:ok, [acc, key_data, value_data]}}
-        else
-          error -> {:halt, error}
-        end
-      end)
-    else
-      {:error, "map too big"}
-    end
+    # if marker do
+    #   Enum.reduce_while(map, {:ok, [marker]}, fn {k, v}, {:ok, acc} ->
+    #     with {:ok, key_data} <- mod.encode(k, opts),
+    #       {:ok, value_data} <- mod.encode(v, opts)
+    #     do
+    #       {:cont, {:ok, [acc, key_data, value_data]}}
+    #     else
+    #       error -> {:halt, error}
+    #     end
+    #   end)
+    # else
+    #   {:error, "map too big"}
+    # end
   end
 
   def encode(_mod, term, _opts) do
@@ -394,4 +424,56 @@ defmodule MsgPack.Coder do
         :error
     end
   end
+
+  def encode_map(mod, map, opts) do
+    size = map_size(map)
+
+    marker = cond do
+      size < 16 -> 0b10000000 + size
+      size < 0x10000 -> <<0xde, size::16>>
+      size < 0x100000000 -> <<0xdf, size::32>>
+      true -> nil
+    end
+
+    if marker do
+      with {:ok, struct_data, map} <- encode_struct_item(mod, map, opts),
+        {:ok, map_data} <- encode_map_items(mod, map, opts)
+      do
+        {:ok, [marker, struct_data, map_data]}
+      end
+    else
+      {:error, "map too big"}
+    end
+  end
+
+  def encode_struct_item(mod, map, opts) do
+    case Map.pop(map, :__struct__) do
+      {nil, map} ->
+        {:ok, [], map}
+
+      {v, map} ->
+        with {:ok, item} <- encode_map_item(mod, :__struct__, v, opts) do
+          {:ok, item, map}
+        end
+    end
+  end
+
+  def encode_map_items(mod, map, opts) do
+    Enum.reduce_while(map, {:ok, []}, fn {k, v}, {:ok, acc} ->
+      with {:ok, data} <- encode_map_item(mod, k, v, opts) do
+        {:cont, {:ok, [acc, data]}}
+      else
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  def encode_map_item(mod, k, v, opts) do
+    with {:ok, k_data} <- mod.encode(k, opts),
+      {:ok, v_data} <- mod.encode(v, opts)
+    do
+      {:ok, [k_data, v_data]}
+    end
+  end
+
 end
