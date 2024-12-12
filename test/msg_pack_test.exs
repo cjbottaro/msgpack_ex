@@ -22,20 +22,20 @@ defmodule MsgPackTest do
   end
 
   test "binary 8" do
-    assert_format build_bytes(1), <<0xC4, 1>>, build_string(1)
-    assert_format build_bytes(255), <<0xC4, 255>>, build_string(255)
+    assert_format build_bytes(1), <<0xC4, 1>>, {build_string(1), [bin_as_string: true]}
+    assert_format build_bytes(255), <<0xC4, 255>>, {build_string(255), [bin_as_string: true]}
 
-    assert_format build_bytes(1), <<0xC4, 1>>, {build_bytes(1), [binary: true]}
-    assert_format build_bytes(255), <<0xC4, 255>>, {build_bytes(255), [binary: true]}
+    assert_format build_bytes(1), <<0xC4, 1>>, build_bytes(1)
+    assert_format build_bytes(255), <<0xC4, 255>>, build_bytes(255)
   end
 
   test "binary 16" do
-    assert_format build_bytes(0x100), <<0xC5, 0x100::16>>, build_string(0x100)
-    assert_format build_bytes(0xFFFF), <<0xC5, 0xFFFF::16>>, build_string(0xFFFF)
+    assert_format build_bytes(0x100), <<0xC5, 0x100::16>>, {build_string(0x100), [bin_as_string: true]}
+    assert_format build_bytes(0xFFFF), <<0xC5, 0xFFFF::16>>, {build_string(0xFFFF), [bin_as_string: true]}
   end
 
   test "binary 32" do
-    assert_format build_bytes(0x10000), <<0xC6, 0x10000::32>>, build_string(0x10000)
+    assert_format build_bytes(0x10000), <<0xC6, 0x10000::32>>, {build_string(0x10000), [bin_as_string: true]}
   end
 
   test "fixarray" do
@@ -181,7 +181,7 @@ defmodule MsgPackTest do
   # end
 
   test "encoder not implemented" do
-    assert {:error, "undefined encoder for {}"} = MsgPack.encode([{}])
+    assert {:error, "encode_tuple not implemented"} = MsgPack.encode([{}])
   end
 
   # test "pack!/2 with the :iodata option" do

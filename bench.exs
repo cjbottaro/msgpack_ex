@@ -20,8 +20,8 @@ test_data = %{
 
 Benchee.run(
   [
-    {"encode", fn -> MsgPack.encode(test_data) end},
     {"pack", fn -> Msgpax.pack(test_data) end},
+    {"encode", fn -> MsgPack.encode(test_data) end},
   ],
   time: 10,
   parallel: 2,

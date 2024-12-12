@@ -6,7 +6,11 @@ defmodule MsgPack do
   def encode(input, opts \\ []) do
     coder = Keyword.get(opts, :coder, @coder)
     with {:ok, iodata} <- coder.encode(input, opts) do
-      {:ok, IO.iodata_to_binary(iodata)}
+      if opts[:iodata] do
+        {:ok, iodata}
+      else
+        {:ok, IO.iodata_to_binary(iodata)}
+      end
     end
   end
 
